@@ -1,6 +1,4 @@
 (() => {
-  const STORAGE_KEY = "mondayContactFillerLead";
-
   /*
     WhatsApp mode:
     "FULL_DISPLAY_IN_FIRST_NAME" fills:
@@ -43,60 +41,6 @@
     const firstName = parts.shift() || "";
     const lastName = parts.join(" ");
     return { firstName, lastName };
-  }
-
-  function getCell(row, columnId) {
-    const cell = row.querySelector(`.col-identifier-${columnId}`);
-    if (!cell) return "";
-
-    const text = cleanText(cell.innerText);
-    if (text) return text;
-
-    const aria = cleanText(cell.getAttribute("aria-label"));
-    if (!aria) return "";
-
-    return aria;
-  }
-
-  function getMondayName(row) {
-    const checkbox = row.querySelector('input[aria-label^="Select item:"]');
-
-    if (checkbox) {
-      return cleanText(
-        checkbox.getAttribute("aria-label").replace("Select item:", "")
-      );
-    }
-
-    const nameCell = row.querySelector(".col-identifier-name");
-    return cleanText(nameCell?.innerText || "").split("\n")[0] || "";
-  }
-
-  function getMondayEmail(row) {
-    const emailLink = row.querySelector(".col-identifier-email_mkxpc0aq a");
-    return cleanText(emailLink?.textContent || getCell(row, MONDAY_COLUMNS.email));
-  }
-
-  function getMondayPhone(row) {
-    const phoneText = row.querySelector(".col-identifier-phone_mkxpfxef .phone-cell-number");
-    return cleanText(phoneText?.textContent || getCell(row, MONDAY_COLUMNS.phone));
-  }
-
-  function getMondayIds(row) {
-    const id = row.id || "";
-    const match = id.match(/currentBoard-(\d+)-(\d+)-/);
-
-    return {
-      boardId: match ? match[1] : "",
-      itemId: match ? match[2] : ""
-    };
-  }
-
-  function getMondayItemLink(row) {
-    const { boardId, itemId } = getMondayIds(row);
-
-    if (!boardId || !itemId) return window.location.href;
-
-    return `${window.location.origin}/boards/${boardId}/pulses/${itemId}`;
   }
 
   function normalizeIrishPhone(phone) {
@@ -146,24 +90,49 @@
     return parts.join(", ");
   }
 
-  function readMondayLeadFromRow(row) {
-    const fullName = getMondayName(row);
+  function getColumnText(columnValues, columnId) {
+    const column = (columnValues || []).find((entry) => entry.id === columnId);
+    return cleanText(column?.text || "");
+  }
+
+  function getPhoneFromColumn(columnValues, columnId) {
+    const column = (columnValues || []).find((entry) => entry.id === columnId);
+    if (!column) return "";
+
+    const text = cleanText(column.text);
+    if (text) return text;
+
+    try {
+      const parsed = JSON.parse(column.value || "{}");
+      return cleanText(parsed.phone || "");
+    } catch {
+      return "";
+    }
+  }
+
+  function mapMondayItemToLead(item, settings) {
+    const columnValues = item.column_values || [];
+    const fullName = cleanText(item.name);
     const { firstName, lastName } = splitName(fullName);
 
-    const email = getMondayEmail(row);
-    const phone = getMondayPhone(row);
+    const email = getColumnText(columnValues, MONDAY_COLUMNS.email);
+    const phone = getPhoneFromColumn(columnValues, MONDAY_COLUMNS.phone);
     const parsedPhone = normalizeIrishPhone(phone);
 
-    const location = getCell(row, MONDAY_COLUMNS.location);
-    const eircode = getCell(row, MONDAY_COLUMNS.eircode);
-    const houseNo = getCell(row, MONDAY_COLUMNS.houseNo);
+    const location = getColumnText(columnValues, MONDAY_COLUMNS.location);
+    const eircode = getColumnText(columnValues, MONDAY_COLUMNS.eircode);
+    const houseNo = getColumnText(columnValues, MONDAY_COLUMNS.houseNo);
+
+    const boardId = settings.mondayBoardId || "";
+    const subdomain = settings.mondaySubdomain || "monday";
+    const host = subdomain.includes(".") ? subdomain : `${subdomain}.monday.com`;
 
     return {
       fullName,
       firstName,
       lastName,
       email,
-      phone,
+      phone: parsedPhone.raw || phone,
       phoneCountryCode: parsedPhone.countryCode,
       phoneAreaCode: parsedPhone.area,
       phoneNumber: parsedPhone.number,
@@ -172,49 +141,38 @@
       eircode,
       houseNo,
       billingAddress: buildAddress({ houseNo, location, eircode }),
-      quoteValue: getCell(row, MONDAY_COLUMNS.quoteValue),
-      quoteDate: getCell(row, MONDAY_COLUMNS.quoteDate),
-      status: getCell(row, MONDAY_COLUMNS.status),
-      projectDetails: getCell(row, MONDAY_COLUMNS.details),
-      mondayItemLink: getMondayItemLink(row),
+      quoteValue: getColumnText(columnValues, MONDAY_COLUMNS.quoteValue),
+      quoteDate: getColumnText(columnValues, MONDAY_COLUMNS.quoteDate),
+      status: getColumnText(columnValues, MONDAY_COLUMNS.status),
+      projectDetails: getColumnText(columnValues, MONDAY_COLUMNS.details),
+      mondayItemLink: boardId
+        ? `https://${host}/boards/${boardId}/pulses/${item.id}`
+        : "",
       savedAt: new Date().toISOString()
     };
   }
 
-  async function saveMondayLeadFromRow(row) {
-    try {
-      const lead = readMondayLeadFromRow(row);
+  async function getMondaySettings() {
+    const response = await chrome.runtime.sendMessage({ type: "getMondaySettings" });
 
-      await chrome.storage.local.set({
-        [STORAGE_KEY]: lead
-      });
-
-      const summary = [
-        `Name: ${lead.fullName}`,
-        `Email: ${lead.email}`,
-        `Phone: ${lead.phone}`,
-        `Address: ${lead.billingAddress}`,
-        `Monday: ${lead.mondayItemLink}`
-      ].join("\n");
-
-      await navigator.clipboard.writeText(summary);
-
-      showToast(`Saved: ${lead.fullName}`);
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not save Monday item.");
+    if (!response?.ok) {
+      throw new Error(response?.error || "Could not load Monday settings.");
     }
+
+    return response.settings;
   }
 
-  async function getSavedLead() {
-    const result = await chrome.storage.local.get(STORAGE_KEY);
-    const lead = result[STORAGE_KEY];
+  async function searchMondayItems(query) {
+    const response = await chrome.runtime.sendMessage({
+      type: "searchMondayItems",
+      query
+    });
 
-    if (!lead) {
-      throw new Error("No saved Monday item found. Save one from Monday first.");
+    if (!response?.ok) {
+      throw new Error(response?.error || "Monday search failed.");
     }
 
-    return lead;
+    return response.items || [];
   }
 
   function setNativeInput(input, value) {
@@ -311,10 +269,8 @@
     };
   }
 
-  async function fillWhatsAppContact() {
+  async function fillWhatsAppContact(lead) {
     try {
-      const lead = await getSavedLead();
-
       const firstInput = document.querySelector('[aria-label="First name"][contenteditable="true"]');
       const lastInput = document.querySelector('[aria-label="Last name"][contenteditable="true"]');
       const phoneInput = document.querySelector('input[data-testid="phone-number-input"], input[aria-label="Phone number"]');
@@ -340,10 +296,8 @@
     return document.querySelector(selector);
   }
 
-  async function fillXeroContact() {
+  async function fillXeroContact(lead) {
     try {
-      const lead = await getSavedLead();
-
       const contactNameInput = queryXero('#contactName, input[data-automationid="CONTACT_NAME--input"]');
       const firstNameInput = queryXero('#first-name, input[data-automationid="PERSON_FIRST_NAME--input"]');
       const lastNameInput = queryXero('#last-name, input[data-automationid="PERSON_LAST_NAME--input"]');
@@ -390,7 +344,7 @@
       top: "24px",
       left: "50%",
       transform: "translateX(-50%)",
-      zIndex: "999999",
+      zIndex: "10000000",
       background: "#111",
       color: "#fff",
       padding: "10px 14px",
@@ -404,6 +358,279 @@
     document.body.appendChild(toast);
 
     setTimeout(() => toast.remove(), 3000);
+  }
+
+  function debounce(fn, delay) {
+    let timer;
+
+    return function debounced(...args) {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), delay);
+    };
+  }
+
+  function getItemSubtitle(item) {
+    const columnValues = item.column_values || [];
+    const eircode = getColumnText(columnValues, MONDAY_COLUMNS.eircode);
+    const status = getColumnText(columnValues, MONDAY_COLUMNS.status);
+    const parts = [];
+
+    if (isUseful(eircode)) parts.push(eircode);
+    if (isUseful(status)) parts.push(status);
+
+    return parts.join(" · ");
+  }
+
+  function openMondaySearchModal(onSelect) {
+    const existing = document.getElementById("mcf-search-modal");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "mcf-search-modal";
+
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "9999999",
+      background: "rgba(0, 0, 0, 0.45)",
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "center",
+      padding: "80px 16px 16px",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    });
+
+    const panel = document.createElement("div");
+    Object.assign(panel.style, {
+      width: "100%",
+      maxWidth: "420px",
+      background: "#fff",
+      borderRadius: "12px",
+      boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+      overflow: "hidden"
+    });
+
+    const header = document.createElement("div");
+    header.textContent = "Search Monday";
+    Object.assign(header.style, {
+      padding: "16px 16px 8px",
+      fontSize: "16px",
+      fontWeight: "600",
+      color: "#1f1f1f"
+    });
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Search Monday by name…";
+    Object.assign(input.style, {
+      display: "block",
+      width: "calc(100% - 32px)",
+      margin: "0 16px 12px",
+      padding: "10px 12px",
+      border: "1px solid #d0d4e4",
+      borderRadius: "8px",
+      fontSize: "14px",
+      boxSizing: "border-box"
+    });
+
+    const status = document.createElement("div");
+    Object.assign(status.style, {
+      padding: "0 16px 12px",
+      fontSize: "13px",
+      color: "#676879",
+      minHeight: "18px"
+    });
+
+    const results = document.createElement("div");
+    Object.assign(results.style, {
+      maxHeight: "320px",
+      overflowY: "auto",
+      borderTop: "1px solid #eceff5"
+    });
+
+    const settingsLink = document.createElement("button");
+    settingsLink.type = "button";
+    settingsLink.textContent = "Open extension settings";
+    Object.assign(settingsLink.style, {
+      display: "none",
+      margin: "0 16px 16px",
+      padding: "0",
+      border: "none",
+      background: "none",
+      color: "#0073ea",
+      fontSize: "13px",
+      cursor: "pointer",
+      textDecoration: "underline"
+    });
+
+    settingsLink.addEventListener("click", () => {
+      chrome.runtime.openOptionsPage();
+    });
+
+    panel.append(header, input, status, results, settingsLink);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    let searchGeneration = 0;
+    let settingsCache = null;
+
+    function closeModal() {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeyDown);
+    }
+
+    function onKeyDown(event) {
+      if (event.key === "Escape") closeModal();
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeModal();
+    });
+
+    function renderResults(items) {
+      results.innerHTML = "";
+
+      if (!items.length) {
+        status.textContent = "No items found.";
+        return;
+      }
+
+      status.textContent = `${items.length} result${items.length === 1 ? "" : "s"}`;
+
+      for (const item of items) {
+        const row = document.createElement("button");
+        row.type = "button";
+        Object.assign(row.style, {
+          display: "block",
+          width: "100%",
+          padding: "12px 16px",
+          border: "none",
+          borderBottom: "1px solid #eceff5",
+          background: "#fff",
+          textAlign: "left",
+          cursor: "pointer"
+        });
+
+        const title = document.createElement("div");
+        title.textContent = item.name;
+        Object.assign(title.style, {
+          fontSize: "14px",
+          fontWeight: "600",
+          color: "#1f1f1f"
+        });
+
+        const subtitle = document.createElement("div");
+        subtitle.textContent = getItemSubtitle(item);
+        Object.assign(subtitle.style, {
+          fontSize: "12px",
+          color: "#676879",
+          marginTop: "2px"
+        });
+
+        row.append(title);
+        if (subtitle.textContent) row.append(subtitle);
+
+        row.addEventListener("mouseenter", () => {
+          row.style.background = "#f5f6f8";
+        });
+
+        row.addEventListener("mouseleave", () => {
+          row.style.background = "#fff";
+        });
+
+        row.addEventListener("click", async () => {
+          try {
+            if (!settingsCache) {
+              settingsCache = await getMondaySettings();
+            }
+
+            const lead = mapMondayItemToLead(item, settingsCache);
+            closeModal();
+            await onSelect(lead);
+          } catch (error) {
+            status.textContent = error.message || "Could not use selected item.";
+            status.style.color = "#c62828";
+          }
+        });
+
+        results.appendChild(row);
+      }
+    }
+
+    const runSearch = debounce(async (query) => {
+      const generation = ++searchGeneration;
+
+      if (query.length < 2) {
+        status.textContent = "Type at least 2 characters to search.";
+        status.style.color = "#676879";
+        results.innerHTML = "";
+        return;
+      }
+
+      status.textContent = "Searching…";
+      status.style.color = "#676879";
+      results.innerHTML = "";
+
+      try {
+        if (!settingsCache) {
+          settingsCache = await getMondaySettings();
+        }
+
+        if (!settingsCache.mondayApiToken || !settingsCache.mondayBoardId) {
+          status.textContent = "Configure API token and board ID in extension settings.";
+          status.style.color = "#c62828";
+          settingsLink.style.display = "block";
+          return;
+        }
+
+        settingsLink.style.display = "none";
+        const items = await searchMondayItems(query);
+
+        if (generation !== searchGeneration) return;
+
+        renderResults(items);
+        status.style.color = "#676879";
+      } catch (error) {
+        if (generation !== searchGeneration) return;
+
+        status.textContent = error.message || "Search failed.";
+        status.style.color = "#c62828";
+
+        if ((error.message || "").includes("settings")) {
+          settingsLink.style.display = "block";
+        }
+      }
+    }, 300);
+
+    input.addEventListener("input", () => runSearch(input.value.trim()));
+
+    getMondaySettings()
+      .then((settings) => {
+        settingsCache = settings;
+
+        if (!settings.mondayApiToken || !settings.mondayBoardId) {
+          status.textContent = "Configure API token and board ID in extension settings.";
+          status.style.color = "#c62828";
+          settingsLink.style.display = "block";
+        } else {
+          status.textContent = "Type at least 2 characters to search.";
+        }
+      })
+      .catch((error) => {
+        status.textContent = error.message || "Could not load settings.";
+        status.style.color = "#c62828";
+        settingsLink.style.display = "block";
+      });
+
+    setTimeout(() => input.focus(), 0);
+  }
+
+  function openFillFromMonday(fillFn) {
+    openMondaySearchModal(async (lead) => {
+      await fillFn(lead);
+    });
   }
 
   function createCopyIconSvg(size) {
@@ -424,120 +651,6 @@
     svg.appendChild(path);
 
     return svg;
-  }
-
-  function createMondayRowButton() {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("aria-label", "Save contact from Monday");
-
-    Object.assign(button.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      width: "24px",
-      height: "24px",
-      padding: "0",
-      marginLeft: "4px",
-      border: "none",
-      borderRadius: "4px",
-      background: "transparent",
-      color: "#676879",
-      cursor: "pointer",
-      flexShrink: "0",
-      verticalAlign: "middle"
-    });
-
-    button.appendChild(createCopyIconSvg(16));
-
-    button.addEventListener("mouseenter", () => {
-      button.style.background = "rgba(0, 0, 0, 0.05)";
-    });
-
-    button.addEventListener("mouseleave", () => {
-      button.style.background = "transparent";
-    });
-
-    return button;
-  }
-
-  function isMondayItemRow(row) {
-    if (!row.classList.contains("pulse-component")) return false;
-    return !(row.id || "").includes("placeholder");
-  }
-
-  function getMondayItemRows() {
-    const rows = [...document.querySelectorAll(".pulse-component")].filter(isMondayItemRow);
-
-    if (rows.length) return rows;
-
-    return [...document.querySelectorAll('[data-testid^="item-"] .pulse-component')].filter(isMondayItemRow);
-  }
-
-  function isMondayBoardReady() {
-    const rows = getMondayItemRows();
-    if (!rows.length) return false;
-
-    return rows.some((row) => !!findMondayButtonAnchor(row));
-  }
-
-  function findMondayButtonAnchor(row) {
-    return (
-      row.querySelector('[class*="actionsContainer"]')
-      || row.querySelector(".name-cell-component__checkbox-indicator-wrapper")
-      || row.querySelector('[class*="nameCellContentContainer"]')
-      || row.querySelector('[id^="name-cell-"]')?.closest('[class*="nameCellContentContainer"]')
-      || row.querySelector(".col-identifier-name .name-cell-component")
-    );
-  }
-
-  function injectMondayRowButtons() {
-    if (!isMondayBoardReady()) return;
-
-    for (const row of getMondayItemRows()) {
-      if (row.dataset.mcfRowButton) continue;
-
-      const anchor = findMondayButtonAnchor(row);
-      if (!anchor) continue;
-
-      row.dataset.mcfRowButton = "1";
-
-      const button = createMondayRowButton();
-      button.addEventListener("click", (event) => {
-        event.stopPropagation();
-        event.preventDefault();
-        saveMondayLeadFromRow(row);
-      });
-
-      anchor.appendChild(button);
-    }
-  }
-
-  function waitForMondayBoardReady(timeoutMs = 60000) {
-    return new Promise((resolve) => {
-      if (isMondayBoardReady()) {
-        resolve(true);
-        return;
-      }
-
-      const startedAt = Date.now();
-
-      const poll = () => {
-        if (isMondayBoardReady()) {
-          resolve(true);
-          return;
-        }
-
-        if (Date.now() - startedAt >= timeoutMs) {
-          resolve(false);
-          return;
-        }
-
-        setTimeout(poll, 500);
-      };
-
-      poll();
-    });
   }
 
   function isWhatsAppContactFormOpen() {
@@ -574,16 +687,17 @@
       button.style.background = "transparent";
     });
 
-    button.addEventListener("click", (event) => {
+    const handleFill = (event) => {
       event.stopPropagation();
       event.preventDefault();
-      fillWhatsAppContact();
-    });
+      openFillFromMonday(fillWhatsAppContact);
+    };
+
+    button.addEventListener("click", handleFill);
 
     button.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        fillWhatsAppContact();
+        handleFill(event);
       }
     });
 
@@ -653,7 +767,7 @@
     button.className = "xui-button xui-actions--secondary xui-button-standard xui-button-small";
     button.setAttribute("data-mcf-xero-fill", "1");
     button.textContent = "Fill from Monday";
-    button.addEventListener("click", fillXeroContact);
+    button.addEventListener("click", () => openFillFromMonday(fillXeroContact));
 
     const cancelBtn = footer.querySelector("#btnCancel");
 
@@ -664,16 +778,8 @@
     }
   }
 
-  let mondayObserverStarted = false;
-
   function runForCurrentSite() {
     const host = window.location.host;
-
-    if (host.includes("monday.com")) {
-      if (!isMondayBoardReady()) return;
-      injectMondayRowButtons();
-      return;
-    }
 
     if (host === "web.whatsapp.com") {
       injectWhatsAppFillButton();
@@ -685,19 +791,7 @@
     }
   }
 
-  function debounce(fn, delay) {
-    let timer;
-
-    return function debounced() {
-      clearTimeout(timer);
-      timer = setTimeout(fn, delay);
-    };
-  }
-
   function startObserver() {
-    if (mondayObserverStarted) return;
-    mondayObserverStarted = true;
-
     const debouncedRun = debounce(runForCurrentSite, 200);
     debouncedRun();
 
@@ -708,21 +802,9 @@
     });
   }
 
-  async function initForCurrentSite() {
-    const host = window.location.host;
-
-    if (host.includes("monday.com")) {
-      await waitForMondayBoardReady();
-      startObserver();
-      return;
-    }
-
-    startObserver();
-  }
-
   if (document.readyState === "complete") {
-    initForCurrentSite();
+    startObserver();
   } else {
-    window.addEventListener("load", () => initForCurrentSite(), { once: true });
+    window.addEventListener("load", () => startObserver(), { once: true });
   }
 })();

@@ -1,18 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Monday Contact Filler",
-  "version": "1.2.1",
-  "description": "Saves selected Monday item and fills WhatsApp Web or Xero contact forms.",
+  "version": "1.3.0",
+  "description": "Search Monday items by name and fill WhatsApp Web or Xero contact forms.",
   "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [
-    "https://*.monday.com/*",
+    "https://api.monday.com/*",
     "https://web.whatsapp.com/*",
     "https://*.xero.com/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
   "content_scripts": [
     {
       "matches": [
-        "https://*.monday.com/*",
         "https://web.whatsapp.com/*",
         "https://*.xero.com/*"
       ],
