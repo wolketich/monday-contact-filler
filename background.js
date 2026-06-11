@@ -13,14 +13,14 @@ const MONDAY_COLUMN_IDS = [
 ];
 
 const SEARCH_QUERY = `
-  query SearchBoardItems($boardIds: [ID!], $term: [String!], $columnIds: [String!]) {
+  query SearchBoardItems($boardIds: [ID!], $compareValue: CompareValue!, $columnIds: [String!]) {
     boards(ids: $boardIds) {
       items_page(
         limit: 20
         query_params: {
           rules: [{
             column_id: "name"
-            compare_value: $term
+            compare_value: $compareValue
             operator: contains_text
           }]
         }
@@ -95,7 +95,7 @@ async function searchMondayItems(query) {
 
   const data = await mondayGraphQL(SEARCH_QUERY, {
     boardIds: [mondayBoardId],
-    term: [query],
+    compareValue: [query],
     columnIds: MONDAY_COLUMN_IDS
   });
 
@@ -104,6 +104,12 @@ async function searchMondayItems(query) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "openOptionsPage") {
+    chrome.runtime.openOptionsPage();
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (message.type === "searchMondayItems") {
     searchMondayItems(message.query)
       .then((items) => sendResponse({ ok: true, items }))

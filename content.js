@@ -23,6 +23,61 @@
     phone: "phone_mkxpfxef"
   };
 
+  function getExtensionRuntime() {
+    if (typeof chrome !== "undefined" && chrome.runtime?.id) {
+      return chrome.runtime;
+    }
+
+    if (typeof browser !== "undefined" && browser.runtime?.id) {
+      return browser.runtime;
+    }
+
+    return null;
+  }
+
+  function sendExtensionMessage(message) {
+    const runtime = getExtensionRuntime();
+
+    if (!runtime?.sendMessage) {
+      return Promise.reject(
+        new Error("Extension unavailable. Reload this page after updating the extension.")
+      );
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        runtime.sendMessage(message, (response) => {
+          const lastError = chrome?.runtime?.lastError || browser?.runtime?.lastError;
+
+          if (lastError?.message) {
+            reject(new Error(lastError.message));
+            return;
+          }
+
+          resolve(response);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  function openExtensionSettings() {
+    const runtime = getExtensionRuntime();
+
+    if (!runtime) {
+      showToast("Reload this page, then open extension settings from chrome://extensions.");
+      return;
+    }
+
+    sendExtensionMessage({ type: "openOptionsPage" })
+      .catch(() => {
+        if (typeof runtime.getURL === "function") {
+          window.open(runtime.getURL("options.html"), "_blank", "noopener");
+        }
+      });
+  }
+
   function cleanText(value) {
     return (value || "")
       .replace(/\u00a0/g, " ")
@@ -153,7 +208,7 @@
   }
 
   async function getMondaySettings() {
-    const response = await chrome.runtime.sendMessage({ type: "getMondaySettings" });
+    const response = await sendExtensionMessage({ type: "getMondaySettings" });
 
     if (!response?.ok) {
       throw new Error(response?.error || "Could not load Monday settings.");
@@ -163,7 +218,7 @@
   }
 
   async function searchMondayItems(query) {
-    const response = await chrome.runtime.sendMessage({
+    const response = await sendExtensionMessage({
       type: "searchMondayItems",
       query
     });
@@ -319,12 +374,12 @@
       setNativeInput(phoneAreaInput, lead.phoneAreaCode || "");
       setNativeInput(phoneNumberInput, lead.phoneNumber || "");
 
-      if (billingAddressInput && lead.billingAddress) {
-        setNativeInput(billingAddressInput, lead.billingAddress);
+      if (billingAddressInput && isUseful(lead.eircode)) {
+        setNativeInput(billingAddressInput, lead.eircode);
         billingAddressInput.focus();
       }
 
-      showToast("Filled Xero. Pick the billing address result manually.");
+      showToast("Filled Xero. Pick the address from the eircode result.");
     } catch (error) {
       console.error(error);
       showToast(error.message || "Could not fill Xero.");
@@ -464,7 +519,7 @@
     });
 
     settingsLink.addEventListener("click", () => {
-      chrome.runtime.openOptionsPage();
+      openExtensionSettings();
     });
 
     panel.append(header, input, status, results, settingsLink);
