@@ -255,8 +255,27 @@
     return true;
   }
 
-  function clearContentEditable(element) {
+  function getWhatsAppNameField(label) {
+    const selectors = [
+      `[aria-label="${label}"][contenteditable="true"]`,
+      `[aria-label="${label}"] [contenteditable="true"]`
+    ];
+
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element) return element;
+    }
+
+    return null;
+  }
+
+  function getEditableText(element) {
+    return cleanText(element?.innerText || element?.textContent || "");
+  }
+
+  async function clearWhatsAppEditable(element) {
     element.focus();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
 
     const selection = window.getSelection();
     const range = document.createRange();
@@ -266,33 +285,59 @@
 
     document.execCommand("selectAll", false, null);
     document.execCommand("delete", false, null);
+    selection.deleteFromDocument();
+
     element.innerHTML = "";
     element.textContent = "";
+
+    element.dispatchEvent(new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      inputType: "deleteContentBackward"
+    }));
 
     element.dispatchEvent(new InputEvent("input", {
       bubbles: true,
       inputType: "deleteContentBackward"
     }));
+
+    await new Promise((resolve) => requestAnimationFrame(resolve));
   }
 
-  function setContentEditable(element, value) {
+  async function setWhatsAppContentEditable(element, value) {
     if (!element) return false;
 
-    clearContentEditable(element);
+    const targetValue = cleanText(value);
+    await clearWhatsAppEditable(element);
 
-    if (value) {
-      element.focus();
-      document.execCommand("insertText", false, value);
+    if (!targetValue) {
+      return true;
+    }
 
-      if (!element.textContent) {
-        element.textContent = value;
-      }
+    element.focus();
+
+    let inserted = false;
+
+    try {
+      await navigator.clipboard.writeText(targetValue);
+      inserted = document.execCommand("paste");
+    } catch {
+      inserted = false;
+    }
+
+    if (!inserted) {
+      document.execCommand("insertText", false, targetValue);
+    }
+
+    if (getEditableText(element) !== targetValue) {
+      element.innerHTML = "";
+      element.textContent = targetValue;
     }
 
     element.dispatchEvent(new InputEvent("input", {
       bubbles: true,
       inputType: "insertText",
-      data: value
+      data: targetValue
     }));
 
     element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -301,11 +346,17 @@
   }
 
   function formatNameWithEircode(fullName, eircode) {
-    const name = cleanText(fullName);
+    let name = cleanText(fullName);
     if (!isUseful(eircode)) return name;
 
-    const suffix = ` | ${cleanText(eircode)}`;
-    if (name.endsWith(suffix) || name.includes(suffix)) return name;
+    const code = cleanText(eircode);
+    const suffix = ` | ${code}`;
+
+    while (name.endsWith(suffix)) {
+      name = name.slice(0, -suffix.length).trim();
+    }
+
+    if (name.includes(suffix)) return name;
 
     return `${name}${suffix}`;
   }
@@ -326,14 +377,14 @@
 
   async function fillWhatsAppContact(lead) {
     try {
-      const firstInput = document.querySelector('[aria-label="First name"][contenteditable="true"]');
-      const lastInput = document.querySelector('[aria-label="Last name"][contenteditable="true"]');
+      const firstInput = getWhatsAppNameField("First name");
+      const lastInput = getWhatsAppNameField("Last name");
       const phoneInput = document.querySelector('input[data-testid="phone-number-input"], input[aria-label="Phone number"]');
 
       const whatsappNames = getWhatsAppNameValues(lead);
 
-      const filledFirst = setContentEditable(firstInput, whatsappNames.first);
-      const filledLast = setContentEditable(lastInput, whatsappNames.last);
+      const filledFirst = await setWhatsAppContentEditable(firstInput, whatsappNames.first);
+      const filledLast = await setWhatsAppContentEditable(lastInput, whatsappNames.last);
       const filledPhone = setNativeInput(phoneInput, lead.whatsappPhone || lead.phoneNumber || "");
 
       if (!filledFirst && !filledLast && !filledPhone) {
