@@ -1,16 +1,6 @@
-const MONDAY_API_URL = "https://api.monday.com/v2";
+importScripts("column-fields.js");
 
-const MONDAY_COLUMN_IDS = [
-  "numeric_mkxpg30y",
-  "date_mky44ttv",
-  "long_textulr8cj0f",
-  "status",
-  "email_mkxpc0aq",
-  "location_mkxpbfk8",
-  "text_mm20s5jm",
-  "text_mkzxqr9j",
-  "phone_mkxpfxef"
-];
+const MONDAY_API_URL = "https://api.monday.com/v2";
 
 const SEARCH_QUERY = `
   query SearchBoardItems($boardIds: [ID!], $compareValue: CompareValue!, $columnIds: [String!]) {
@@ -39,24 +29,39 @@ const SEARCH_QUERY = `
   }
 `;
 
+const BOARD_COLUMNS_QUERY = `
+  query BoardColumns($boardIds: [ID!]) {
+    boards(ids: $boardIds) {
+      columns {
+        id
+        title
+        type
+      }
+    }
+  }
+`;
+
 async function getMondaySettings() {
   const result = await chrome.storage.local.get([
     "mondayApiToken",
     "mondayBoardId",
-    "mondaySubdomain"
+    "mondaySubdomain",
+    "mondayColumnMap"
   ]);
 
   return {
     mondayApiToken: result.mondayApiToken || "",
     mondayBoardId: result.mondayBoardId || "",
-    mondaySubdomain: result.mondaySubdomain || ""
+    mondaySubdomain: result.mondaySubdomain || "",
+    mondayColumnMap: result.mondayColumnMap || {}
   };
 }
 
-async function mondayGraphQL(query, variables) {
+async function mondayGraphQL(query, variables, tokenOverride) {
   const { mondayApiToken } = await getMondaySettings();
+  const token = tokenOverride || mondayApiToken;
 
-  if (!mondayApiToken) {
+  if (!token) {
     throw new Error("Monday API token not configured. Open extension settings.");
   }
 
@@ -64,7 +69,7 @@ async function mondayGraphQL(query, variables) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: mondayApiToken
+      Authorization: token
     },
     body: JSON.stringify({ query, variables })
   });
@@ -86,17 +91,31 @@ async function mondayGraphQL(query, variables) {
   return payload.data;
 }
 
+async function fetchBoardColumns(boardId, tokenOverride) {
+  const data = await mondayGraphQL(BOARD_COLUMNS_QUERY, {
+    boardIds: [boardId]
+  }, tokenOverride);
+
+  return data?.boards?.[0]?.columns || [];
+}
+
 async function searchMondayItems(query) {
-  const { mondayBoardId } = await getMondaySettings();
+  const { mondayBoardId, mondayColumnMap } = await getMondaySettings();
 
   if (!mondayBoardId) {
     throw new Error("Monday board ID not configured. Open extension settings.");
   }
 
+  const columnIds = McfColumnFields.getConfiguredColumnIds(mondayColumnMap);
+
+  if (!columnIds.length) {
+    throw new Error("Monday column mapping not configured. Open extension settings.");
+  }
+
   const data = await mondayGraphQL(SEARCH_QUERY, {
     boardIds: [mondayBoardId],
     compareValue: [query],
-    columnIds: MONDAY_COLUMN_IDS
+    columnIds
   });
 
   const board = data?.boards?.[0];
@@ -107,6 +126,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "openOptionsPage") {
     chrome.runtime.openOptionsPage();
     sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === "fetchBoardColumns") {
+    fetchBoardColumns(message.boardId, message.token)
+      .then((columns) => sendResponse({ ok: true, columns }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+
     return true;
   }
 

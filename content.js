@@ -11,18 +11,6 @@
   */
   const WHATSAPP_NAME_MODE = "FULL_DISPLAY_IN_FIRST_NAME";
 
-  const MONDAY_COLUMNS = {
-    quoteValue: "numeric_mkxpg30y",
-    quoteDate: "date_mky44ttv",
-    details: "long_textulr8cj0f",
-    status: "status",
-    email: "email_mkxpc0aq",
-    location: "location_mkxpbfk8",
-    eircode: "text_mm20s5jm",
-    houseNo: "text_mkzxqr9j",
-    phone: "phone_mkxpfxef"
-  };
-
   function getExtensionRuntime() {
     if (typeof chrome !== "undefined" && chrome.runtime?.id) {
       return chrome.runtime;
@@ -166,17 +154,18 @@
   }
 
   function mapMondayItemToLead(item, settings) {
+    const columnMap = settings.mondayColumnMap || {};
     const columnValues = item.column_values || [];
     const fullName = cleanText(item.name);
     const { firstName, lastName } = splitName(fullName);
 
-    const email = getColumnText(columnValues, MONDAY_COLUMNS.email);
-    const phone = getPhoneFromColumn(columnValues, MONDAY_COLUMNS.phone);
+    const email = getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "email"));
+    const phone = getPhoneFromColumn(columnValues, McfColumnFields.getColumnId(columnMap, "phone"));
     const parsedPhone = normalizeIrishPhone(phone);
 
-    const location = getColumnText(columnValues, MONDAY_COLUMNS.location);
-    const eircode = getColumnText(columnValues, MONDAY_COLUMNS.eircode);
-    const houseNo = getColumnText(columnValues, MONDAY_COLUMNS.houseNo);
+    const location = getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "location"));
+    const eircode = formatEircode(getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "eircode")));
+    const houseNo = getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "houseNo"));
 
     const boardId = settings.mondayBoardId || "";
     const subdomain = settings.mondaySubdomain || "monday";
@@ -196,10 +185,10 @@
       eircode,
       houseNo,
       billingAddress: buildAddress({ houseNo, location, eircode }),
-      quoteValue: getColumnText(columnValues, MONDAY_COLUMNS.quoteValue),
-      quoteDate: getColumnText(columnValues, MONDAY_COLUMNS.quoteDate),
-      status: getColumnText(columnValues, MONDAY_COLUMNS.status),
-      projectDetails: getColumnText(columnValues, MONDAY_COLUMNS.details),
+      quoteValue: getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "quoteValue")),
+      quoteDate: getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "quoteDate")),
+      status: getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "status")),
+      projectDetails: getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "projectDetails")),
       mondayItemLink: boardId
         ? `https://${host}/boards/${boardId}/pulses/${item.id}`
         : "",
@@ -334,27 +323,6 @@
     await sleep(50);
   }
 
-  function insertWhatsAppText(element, targetValue) {
-    const beforeInput = new InputEvent("beforeinput", {
-      bubbles: true,
-      cancelable: true,
-      inputType: "insertReplacementText",
-      data: targetValue
-    });
-
-    element.dispatchEvent(beforeInput);
-
-    if (!beforeInput.defaultPrevented) {
-      document.execCommand("insertText", false, targetValue);
-    }
-
-    element.dispatchEvent(new InputEvent("input", {
-      bubbles: true,
-      inputType: "insertReplacementText",
-      data: targetValue
-    }));
-  }
-
   async function setWhatsAppContentEditable(element, value) {
     if (!element) return false;
 
@@ -365,45 +333,56 @@
       return true;
     }
 
-    element.focus();
-    await sleep(50);
-
-    insertWhatsAppText(element, targetValue);
-    await sleep(50);
-
-    if (getEditableText(element) !== targetValue) {
-      await clearWhatsAppEditable(element);
-      element.focus();
-
-      for (const char of targetValue) {
-        document.execCommand("insertText", false, char);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (getEditableText(element)) {
+        await clearWhatsAppEditable(element);
       }
 
-      element.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: targetValue
-      }));
+      element.focus();
+      await sleep(50);
+
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, targetValue);
+
+      await sleep(50);
+
+      if (getEditableText(element) === targetValue) {
+        element.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: targetValue
+        }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
     }
 
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-
     return getEditableText(element) === targetValue;
+  }
+
+  function formatEircode(eircode) {
+    const compact = cleanText(eircode).replace(/\s+/g, "").toUpperCase();
+    if (!compact) return "";
+
+    if (/^[A-Z0-9]{7}$/.test(compact)) {
+      return `${compact.slice(0, 3)} ${compact.slice(3)}`;
+    }
+
+    return compact;
   }
 
   function formatNameWithEircode(fullName, eircode) {
     let name = cleanText(fullName);
     if (!isUseful(eircode)) return name;
 
-    const code = cleanText(eircode);
-    const suffix = ` | ${code}`;
-    const suffixIndex = name.indexOf(suffix);
+    const code = formatEircode(eircode);
+    const suffixIndex = name.search(/\s\|\s/);
 
     if (suffixIndex !== -1) {
       name = name.slice(0, suffixIndex).trim();
     }
 
-    return `${name}${suffix}`;
+    return `${name} | ${code}`;
   }
 
   function getWhatsAppNameValues(lead) {
@@ -525,10 +504,10 @@
     };
   }
 
-  function getItemSubtitle(item) {
+  function getItemSubtitle(item, columnMap) {
     const columnValues = item.column_values || [];
-    const eircode = getColumnText(columnValues, MONDAY_COLUMNS.eircode);
-    const status = getColumnText(columnValues, MONDAY_COLUMNS.status);
+    const eircode = formatEircode(getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "eircode")));
+    const status = getColumnText(columnValues, McfColumnFields.getColumnId(columnMap, "status"));
     const parts = [];
 
     if (isUseful(eircode)) parts.push(eircode);
@@ -678,7 +657,7 @@
         });
 
         const subtitle = document.createElement("div");
-        subtitle.textContent = getItemSubtitle(item);
+        subtitle.textContent = getItemSubtitle(item, settingsCache?.mondayColumnMap || {});
         Object.assign(subtitle.style, {
           fontSize: "12px",
           color: "#676879",
@@ -741,6 +720,13 @@
           return;
         }
 
+        if (!McfColumnFields.getConfiguredColumnIds(settingsCache.mondayColumnMap).length) {
+          status.textContent = "Map Monday columns in extension settings.";
+          status.style.color = "#c62828";
+          settingsLink.style.display = "block";
+          return;
+        }
+
         settingsLink.style.display = "none";
         const items = await searchMondayItems(query);
 
@@ -768,6 +754,10 @@
 
         if (!settings.mondayApiToken || !settings.mondayBoardId) {
           status.textContent = "Configure API token and board ID in extension settings.";
+          status.style.color = "#c62828";
+          settingsLink.style.display = "block";
+        } else if (!McfColumnFields.getConfiguredColumnIds(settings.mondayColumnMap).length) {
+          status.textContent = "Map Monday columns in extension settings.";
           status.style.color = "#c62828";
           settingsLink.style.display = "block";
         } else {
@@ -822,42 +812,27 @@
 
     Object.assign(button.style, {
       display: "flex",
-      flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      gap: "2px",
-      width: "56px",
-      height: "56px",
+      width: "48px",
+      height: "48px",
       cursor: "pointer",
       borderRadius: "50%",
-      color: "#00a884",
-      background: "#ffffff",
-      border: "2px solid #00a884",
-      boxShadow: "0 2px 12px rgba(0, 0, 0, 0.35)"
+      color: "#ffffff",
+      background: "#111111",
+      border: "none",
+      boxShadow: "0 2px 12px rgba(0, 0, 0, 0.45)"
     });
 
     button.appendChild(createCopyIconSvg(22));
 
-    const label = document.createElement("span");
-    label.textContent = "Mon";
-    label.setAttribute("aria-hidden", "true");
-    Object.assign(label.style, {
-      fontSize: "9px",
-      fontWeight: "700",
-      lineHeight: "1",
-      letterSpacing: "0.02em",
-      color: "#00a884",
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-    });
-    button.appendChild(label);
-
     button.addEventListener("mouseenter", () => {
-      button.style.background = "#e7f8f3";
+      button.style.background = "#2a2a2a";
       button.style.transform = "scale(1.05)";
     });
 
     button.addEventListener("mouseleave", () => {
-      button.style.background = "#ffffff";
+      button.style.background = "#111111";
       button.style.transform = "scale(1)";
     });
 
@@ -891,14 +866,14 @@
 
     if (saveBtn) {
       const rect = saveBtn.getBoundingClientRect();
-      wrapper.style.left = `${rect.left + rect.width / 2 - 28}px`;
-      wrapper.style.top = `${rect.top - 64}px`;
+      wrapper.style.left = `${rect.left + rect.width / 2 - 24}px`;
+      wrapper.style.top = `${rect.top - 56}px`;
       return;
     }
 
     if (firstInput) {
       const rect = firstInput.getBoundingClientRect();
-      wrapper.style.left = `${rect.right - 56}px`;
+      wrapper.style.left = `${rect.right - 48}px`;
       wrapper.style.top = `${rect.bottom + 12}px`;
     }
   }
