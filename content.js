@@ -269,23 +269,53 @@
     return null;
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   function getEditableText(element) {
     return cleanText(element?.innerText || element?.textContent || "");
   }
 
+  function dispatchKey(element, key, code, modifiers = {}) {
+    const options = {
+      key,
+      code,
+      bubbles: true,
+      cancelable: true,
+      ...modifiers
+    };
+
+    element.dispatchEvent(new KeyboardEvent("keydown", options));
+    element.dispatchEvent(new KeyboardEvent("keyup", options));
+  }
+
   async function clearWhatsAppEditable(element) {
     element.focus();
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await sleep(50);
 
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    selection.removeAllRanges();
-    selection.addRange(range);
+    const selectAllModifier = navigator.platform.includes("Mac")
+      ? { metaKey: true }
+      : { ctrlKey: true };
 
-    document.execCommand("selectAll", false, null);
-    document.execCommand("delete", false, null);
-    selection.deleteFromDocument();
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      if (!getEditableText(element)) break;
+
+      dispatchKey(element, "a", "KeyA", selectAllModifier);
+      await sleep(20);
+      dispatchKey(element, "Backspace", "Backspace");
+      dispatchKey(element, "Delete", "Delete");
+      await sleep(20);
+
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+      selection.deleteFromDocument();
+    }
 
     element.innerHTML = "";
     element.textContent = "";
@@ -301,7 +331,28 @@
       inputType: "deleteContentBackward"
     }));
 
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await sleep(50);
+  }
+
+  function insertWhatsAppText(element, targetValue) {
+    const beforeInput = new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      inputType: "insertReplacementText",
+      data: targetValue
+    });
+
+    element.dispatchEvent(beforeInput);
+
+    if (!beforeInput.defaultPrevented) {
+      document.execCommand("insertText", false, targetValue);
+    }
+
+    element.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType: "insertReplacementText",
+      data: targetValue
+    }));
   }
 
   async function setWhatsAppContentEditable(element, value) {
@@ -315,34 +366,29 @@
     }
 
     element.focus();
+    await sleep(50);
 
-    let inserted = false;
-
-    try {
-      await navigator.clipboard.writeText(targetValue);
-      inserted = document.execCommand("paste");
-    } catch {
-      inserted = false;
-    }
-
-    if (!inserted) {
-      document.execCommand("insertText", false, targetValue);
-    }
+    insertWhatsAppText(element, targetValue);
+    await sleep(50);
 
     if (getEditableText(element) !== targetValue) {
-      element.innerHTML = "";
-      element.textContent = targetValue;
-    }
+      await clearWhatsAppEditable(element);
+      element.focus();
 
-    element.dispatchEvent(new InputEvent("input", {
-      bubbles: true,
-      inputType: "insertText",
-      data: targetValue
-    }));
+      for (const char of targetValue) {
+        document.execCommand("insertText", false, char);
+      }
+
+      element.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: targetValue
+      }));
+    }
 
     element.dispatchEvent(new Event("change", { bubbles: true }));
 
-    return true;
+    return getEditableText(element) === targetValue;
   }
 
   function formatNameWithEircode(fullName, eircode) {
@@ -351,12 +397,11 @@
 
     const code = cleanText(eircode);
     const suffix = ` | ${code}`;
+    const suffixIndex = name.indexOf(suffix);
 
-    while (name.endsWith(suffix)) {
-      name = name.slice(0, -suffix.length).trim();
+    if (suffixIndex !== -1) {
+      name = name.slice(0, suffixIndex).trim();
     }
-
-    if (name.includes(suffix)) return name;
 
     return `${name}${suffix}`;
   }
@@ -383,9 +428,14 @@
 
       const whatsappNames = getWhatsAppNameValues(lead);
 
+      const filledPhone = setNativeInput(phoneInput, lead.whatsappPhone || lead.phoneNumber || "");
+
+      if (filledPhone) {
+        await sleep(500);
+      }
+
       const filledFirst = await setWhatsAppContentEditable(firstInput, whatsappNames.first);
       const filledLast = await setWhatsAppContentEditable(lastInput, whatsappNames.last);
-      const filledPhone = setNativeInput(phoneInput, lead.whatsappPhone || lead.phoneNumber || "");
 
       if (!filledFirst && !filledLast && !filledPhone) {
         throw new Error("WhatsApp contact form fields not found.");
@@ -772,25 +822,43 @@
 
     Object.assign(button.style, {
       display: "flex",
+      flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      width: "40px",
-      height: "40px",
+      gap: "2px",
+      width: "56px",
+      height: "56px",
       cursor: "pointer",
       borderRadius: "50%",
       color: "#00a884",
-      background: "transparent",
-      boxShadow: "none"
+      background: "#ffffff",
+      border: "2px solid #00a884",
+      boxShadow: "0 2px 12px rgba(0, 0, 0, 0.35)"
     });
 
-    button.appendChild(createCopyIconSvg(24));
+    button.appendChild(createCopyIconSvg(22));
+
+    const label = document.createElement("span");
+    label.textContent = "Mon";
+    label.setAttribute("aria-hidden", "true");
+    Object.assign(label.style, {
+      fontSize: "9px",
+      fontWeight: "700",
+      lineHeight: "1",
+      letterSpacing: "0.02em",
+      color: "#00a884",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    });
+    button.appendChild(label);
 
     button.addEventListener("mouseenter", () => {
-      button.style.background = "rgba(0, 0, 0, 0.06)";
+      button.style.background = "#e7f8f3";
+      button.style.transform = "scale(1.05)";
     });
 
     button.addEventListener("mouseleave", () => {
-      button.style.background = "transparent";
+      button.style.background = "#ffffff";
+      button.style.transform = "scale(1)";
     });
 
     const handleFill = (event) => {
@@ -823,14 +891,14 @@
 
     if (saveBtn) {
       const rect = saveBtn.getBoundingClientRect();
-      wrapper.style.left = `${rect.left + rect.width / 2 - 20}px`;
-      wrapper.style.top = `${rect.top - 48}px`;
+      wrapper.style.left = `${rect.left + rect.width / 2 - 28}px`;
+      wrapper.style.top = `${rect.top - 64}px`;
       return;
     }
 
     if (firstInput) {
       const rect = firstInput.getBoundingClientRect();
-      wrapper.style.left = `${rect.right - 40}px`;
+      wrapper.style.left = `${rect.right - 56}px`;
       wrapper.style.top = `${rect.bottom + 12}px`;
     }
   }
