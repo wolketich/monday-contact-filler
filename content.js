@@ -242,12 +242,39 @@
     return true;
   }
 
+  function clearContentEditable(element) {
+    element.focus();
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    document.execCommand("selectAll", false, null);
+    document.execCommand("delete", false, null);
+    element.innerHTML = "";
+    element.textContent = "";
+
+    element.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType: "deleteContentBackward"
+    }));
+  }
+
   function setContentEditable(element, value) {
     if (!element) return false;
 
-    element.focus();
-    element.textContent = "";
-    element.textContent = value;
+    clearContentEditable(element);
+
+    if (value) {
+      element.focus();
+      document.execCommand("insertText", false, value);
+
+      if (!element.textContent) {
+        element.textContent = value;
+      }
+    }
 
     element.dispatchEvent(new InputEvent("input", {
       bubbles: true,
@@ -439,17 +466,38 @@
     return !(row.id || "").includes("placeholder");
   }
 
-  function injectMondayRowButtons() {
-    const rows = document.querySelectorAll(".pulse-component");
+  function getMondayItemRows() {
+    const rows = [...document.querySelectorAll(".pulse-component")].filter(isMondayItemRow);
 
-    for (const row of rows) {
-      if (!isMondayItemRow(row)) continue;
+    if (rows.length) return rows;
+
+    return [...document.querySelectorAll('[data-testid^="item-"] .pulse-component')].filter(isMondayItemRow);
+  }
+
+  function isMondayBoardReady() {
+    const rows = getMondayItemRows();
+    if (!rows.length) return false;
+
+    return rows.some((row) => !!findMondayButtonAnchor(row));
+  }
+
+  function findMondayButtonAnchor(row) {
+    return (
+      row.querySelector('[class*="actionsContainer"]')
+      || row.querySelector(".name-cell-component__checkbox-indicator-wrapper")
+      || row.querySelector('[class*="nameCellContentContainer"]')
+      || row.querySelector('[id^="name-cell-"]')?.closest('[class*="nameCellContentContainer"]')
+      || row.querySelector(".col-identifier-name .name-cell-component")
+    );
+  }
+
+  function injectMondayRowButtons() {
+    if (!isMondayBoardReady()) return;
+
+    for (const row of getMondayItemRows()) {
       if (row.dataset.mcfRowButton) continue;
 
-      const actionsContainer = row.querySelector('[class*="actionsContainer"]');
-      const anchor = actionsContainer
-        || row.querySelector(".name-cell-component__checkbox-indicator-wrapper");
-
+      const anchor = findMondayButtonAnchor(row);
       if (!anchor) continue;
 
       row.dataset.mcfRowButton = "1";
@@ -465,6 +513,37 @@
     }
   }
 
+  function waitForMondayBoardReady(timeoutMs = 60000) {
+    return new Promise((resolve) => {
+      if (isMondayBoardReady()) {
+        resolve(true);
+        return;
+      }
+
+      const startedAt = Date.now();
+
+      const poll = () => {
+        if (isMondayBoardReady()) {
+          resolve(true);
+          return;
+        }
+
+        if (Date.now() - startedAt >= timeoutMs) {
+          resolve(false);
+          return;
+        }
+
+        setTimeout(poll, 500);
+      };
+
+      poll();
+    });
+  }
+
+  function isWhatsAppContactFormOpen() {
+    return !!document.querySelector('[aria-label="First name"][contenteditable="true"]');
+  }
+
   function createWhatsAppFillButton() {
     const button = document.createElement("div");
     button.setAttribute("role", "button");
@@ -478,11 +557,11 @@
       justifyContent: "center",
       width: "40px",
       height: "40px",
-      marginRight: "8px",
       cursor: "pointer",
       borderRadius: "50%",
       color: "#00a884",
-      flexShrink: "0"
+      background: "transparent",
+      boxShadow: "none"
     });
 
     button.appendChild(createCopyIconSvg(24));
@@ -511,16 +590,56 @@
     return button;
   }
 
-  function injectWhatsAppFillButton() {
-    if (document.querySelector('[data-mcf-whatsapp-fill="1"]')) return;
-
+  function positionWhatsAppFillButton(wrapper) {
     const saveBtn = document.querySelector('[data-testid="save-contact-btn"]');
-    if (!saveBtn) return;
+    const firstInput = document.querySelector('[aria-label="First name"][contenteditable="true"]');
 
-    const container = saveBtn.parentElement;
-    if (!container) return;
+    if (!isWhatsAppContactFormOpen()) {
+      wrapper.style.display = "none";
+      return;
+    }
 
-    container.insertBefore(createWhatsAppFillButton(), saveBtn);
+    wrapper.style.display = "flex";
+
+    if (saveBtn) {
+      const rect = saveBtn.getBoundingClientRect();
+      wrapper.style.left = `${rect.left + rect.width / 2 - 20}px`;
+      wrapper.style.top = `${rect.top - 48}px`;
+      return;
+    }
+
+    if (firstInput) {
+      const rect = firstInput.getBoundingClientRect();
+      wrapper.style.left = `${rect.right - 40}px`;
+      wrapper.style.top = `${rect.bottom + 12}px`;
+    }
+  }
+
+  function injectWhatsAppFillButton() {
+    let wrapper = document.getElementById("mcf-whatsapp-fill-wrapper");
+
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.id = "mcf-whatsapp-fill-wrapper";
+      wrapper.setAttribute("data-mcf-whatsapp-fill-wrapper", "1");
+
+      Object.assign(wrapper.style, {
+        position: "fixed",
+        zIndex: "999999",
+        display: "none",
+        alignItems: "center",
+        justifyContent: "center",
+        pointerEvents: "auto"
+      });
+
+      wrapper.appendChild(createWhatsAppFillButton());
+      document.body.appendChild(wrapper);
+
+      window.addEventListener("scroll", () => positionWhatsAppFillButton(wrapper), true);
+      window.addEventListener("resize", () => positionWhatsAppFillButton(wrapper));
+    }
+
+    positionWhatsAppFillButton(wrapper);
   }
 
   function injectXeroFillButton() {
@@ -545,10 +664,13 @@
     }
   }
 
+  let mondayObserverStarted = false;
+
   function runForCurrentSite() {
     const host = window.location.host;
 
     if (host.includes("monday.com")) {
+      if (!isMondayBoardReady()) return;
       injectMondayRowButtons();
       return;
     }
@@ -572,13 +694,35 @@
     };
   }
 
-  const debouncedRun = debounce(runForCurrentSite, 200);
+  function startObserver() {
+    if (mondayObserverStarted) return;
+    mondayObserverStarted = true;
 
-  runForCurrentSite();
+    const debouncedRun = debounce(runForCurrentSite, 200);
+    debouncedRun();
 
-  const observer = new MutationObserver(() => debouncedRun());
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
+    const observer = new MutationObserver(() => debouncedRun());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  async function initForCurrentSite() {
+    const host = window.location.host;
+
+    if (host.includes("monday.com")) {
+      await waitForMondayBoardReady();
+      startObserver();
+      return;
+    }
+
+    startObserver();
+  }
+
+  if (document.readyState === "complete") {
+    initForCurrentSite();
+  } else {
+    window.addEventListener("load", () => initForCurrentSite(), { once: true });
+  }
 })();
