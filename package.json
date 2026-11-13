@@ -1,0 +1,18 @@
+{
+  "name": "monday-contact-filler",
+  "version": "1.5.0",
+  "private": true,
+  "description": "Chrome extension for monday contacts and WPForms imports",
+  "scripts": {
+    "configure": "node scripts/configure.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "jsdom": "^29.1.1"
+  }
+}

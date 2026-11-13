@@ -1,0 +1,27 @@
+#mcf-monday-import {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #dcdcde;
+}
+
+#mcf-monday-import > .button {
+  width: 100%;
+  min-height: 32px;
+}
+
+#mcf-monday-import .mcf-import-status {
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+#mcf-monday-import .mcf-import-error {
+  color: #b32d2e;
+}
+
+#mcf-monday-import .mcf-import-settings {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+}

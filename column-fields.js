@@ -7,8 +7,13 @@ const McfColumnFields = {
     { key: "houseNo", label: "House No." },
     { key: "status", label: "Status" },
     { key: "quoteValue", label: "Quote value" },
+    { key: "inquiryDate", label: "Inquiry date (submission date)" },
     { key: "quoteDate", label: "Quote date" },
-    { key: "projectDetails", label: "Project details" }
+    { key: "projectDetails", label: "Project details / message" },
+    { key: "address", label: "Address / area (text)" },
+    { key: "files", label: "Pictures / files" },
+    { key: "source", label: "WPForms entry link" },
+    { key: "assignee", label: "Assigned salesperson (People)" }
   ],
 
   getColumnId(columnMap, key) {
@@ -31,13 +36,18 @@ const McfColumnFields = {
 
     if (type === "email") return "email";
     if (type === "phone") return "phone";
+    if (type === "people") return "assignee";
     if (type === "location") return "location";
     if (type === "status") return "status";
+    if (type === "file") return "files";
+    if (type === "link" && /source|wpforms|entry/.test(title)) return "source";
     if (title.includes("eircode") || title.includes("eir code")) return "eircode";
     if (title.includes("house")) return "houseNo";
     if (title.includes("quote") && (type === "numbers" || type === "numeric")) return "quoteValue";
+    if (type === "date" && /inquir|enquir|submitted|submission/.test(title)) return "inquiryDate";
     if (title.includes("date") && type === "date") return "quoteDate";
-    if ((type === "long_text" || type === "long-text") && title.includes("detail")) return "projectDetails";
+    if (["text", "long_text"].includes(type) && /address|area/.test(title)) return "address";
+    if (["text", "long_text", "long-text"].includes(type) && /detail|message|enquiry/.test(title)) return "projectDetails";
 
     return null;
   },

@@ -713,7 +713,7 @@
           settingsCache = await getMondaySettings();
         }
 
-        if (!settingsCache.mondayApiToken || !settingsCache.mondayBoardId) {
+        if (!settingsCache.mondayApiTokenConfigured || !settingsCache.mondayBoardId) {
           status.textContent = "Configure API token and board ID in extension settings.";
           status.style.color = "#c62828";
           settingsLink.style.display = "block";
@@ -752,7 +752,7 @@
       .then((settings) => {
         settingsCache = settings;
 
-        if (!settings.mondayApiToken || !settings.mondayBoardId) {
+        if (!settings.mondayApiTokenConfigured || !settings.mondayBoardId) {
           status.textContent = "Configure API token and board ID in extension settings.";
           status.style.color = "#c62828";
           settingsLink.style.display = "block";

@@ -1,2 +1,9 @@
 .DS_Store
 desktop.ini
+.env
+.env.*
+!.env.example
+defaults.local.json
+node_modules/
+test-results/
+playwright-report/

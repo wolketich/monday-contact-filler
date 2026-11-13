@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Monday Contact Filler",
-  "version": "1.4.0",
-  "description": "Search Monday items by name and fill WhatsApp Web or Xero contact forms.",
+  "version": "1.5.0",
+  "description": "Import WPForms contacts and pictures to monday, and fill WhatsApp Web or Xero contact forms.",
   "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [
     "https://api.monday.com/*",
     "https://web.whatsapp.com/*",
-    "https://*.xero.com/*"
+    "https://*.xero.com/*",
+    "https://expertwindows.ie/*",
+    "https://www.expertwindows.ie/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -20,6 +22,15 @@
         "https://*.xero.com/*"
       ],
       "js": ["column-fields.js", "content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://expertwindows.ie/wp-admin/admin.php*",
+        "https://www.expertwindows.ie/wp-admin/admin.php*"
+      ],
+      "js": ["wpforms-entry.js", "wpforms-content.js"],
+      "css": ["wpforms-content.css"],
       "run_at": "document_idle"
     }
   ]
